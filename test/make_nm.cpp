@@ -460,8 +460,14 @@ class Test {
 			"cqo",
 			"cmpsq",
 			"movsq",
+			"popfq",
+			"pushfq",
+			"lodsq",
+			"movsq",
 			"scasq",
 			"stosq",
+			"syscall",
+			"sysret",
 #else
 			"aaa",
 			"aad",
@@ -469,6 +475,7 @@ class Test {
 			"aas",
 			"daa",
 			"das",
+			"into",
 			"popad",
 			"popfd",
 			"pusha",
@@ -493,9 +500,17 @@ class Test {
 			"cmpsb",
 			"cmpsw",
 			"cmpsd",
+			"int3",
+			"leave",
+			"lodsb",
+			"lodsw",
+			"lodsd",
 			"movsb",
 			"movsw",
 			"movsd",
+			"outsb",
+			"outsw",
+			"outsd",
 			"scasb",
 			"scasw",
 			"scasd",
@@ -508,6 +523,8 @@ class Test {
 			"stc",
 			"std",
 			"sti",
+			"sysenter",
+			"sysexit",
 
 			"emms",
 			"pause",
@@ -540,6 +557,8 @@ class Test {
 			"fabs",
 			"faddp",
 			"fchs",
+			"fclex",
+			"fnclex",
 			"fcom",
 			"fcomp",
 			"fcompp",
@@ -583,11 +602,44 @@ class Test {
 		for (size_t i = 0; i < NUM_OF_ARRAY(tbl); i++) {
 			put(tbl[i]);
 		}
+		{
+			const char memTbl[][16] = {
+				"clflush",
+				"clflushopt",
+				"fbld",
+				"fbstp",
+				"fldcw",
+				"fldenv",
+				"frstor",
+				"fsave",
+				"fnsave",
+				"fstcw",
+				"fnstcw",
+				"fstenv",
+				"fnstenv",
+				"fstsw",
+				"fnstsw",
+				"fxrstor",
+			};
+			for (size_t i = 0; i < NUM_OF_ARRAY(memTbl); i++) {
+				put(memTbl[i], MEM);
+			}
+			put("fstsw", AX);
+			put("fnstsw", AX);
+		}
 
 		put("bswap", REG32e);
 		put("lea", REG32e|REG16, MEM);
-		put("fldcw", MEM);
-		put("fstcw", MEM);
+		put("enter", IMM, IMM);
+		put(isXbyak_ ? "int_" : "int", IMM8);
+		put(isXbyak_ ? "in_" : "in", AL|AX|EAX, IMM8);
+		puts(isXbyak_ ? "in_(al, dx); dump();" : "in al, dx");
+		puts(isXbyak_ ? "in_(ax, dx); dump();" : "in ax, dx");
+		puts(isXbyak_ ? "in_(eax, dx); dump();" : "in eax, dx");
+		put(isXbyak_ ? "out_" : "out", IMM8, AL|AX|EAX);
+		puts(isXbyak_ ? "out_(dx, al); dump();" : "out dx, al");
+		puts(isXbyak_ ? "out_(dx, ax); dump();" : "out dx, ax");
+		puts(isXbyak_ ? "out_(dx, eax); dump();" : "out dx, eax");
 	}
 	void putJmp() const
 	{
@@ -1121,6 +1173,30 @@ class Test {
 			put("mov", REG64, tbl[i].a, tbl[i].b);
 		}
 	}
+	void putLoadSeg() const
+	{
+		const struct Tbl {
+			const char *name;
+			bool support64Bit;
+		} tbl[] = {
+#ifdef XBYAK32
+			{ "lds", false },
+			{ "les", false },
+#endif
+			{ "lss", true },
+			{ "lfs", true },
+			{ "lgs", true },
+		};
+		for (size_t i = 0; i < NUM_OF_ARRAY(tbl); i++) {
+			const Tbl *p = &tbl[i];
+			put(p->name, REG16|REG32, MEM);
+#ifdef XBYAK64
+			if (p->support64Bit) {
+				put(p->name, REG64, MEM);
+			}
+#endif
+		}
+	}
 	// only nasm
 	void putMovImm64() const
 	{
@@ -1176,6 +1252,7 @@ class Test {
 		put("cmpxchg8b", MEM);
 #ifdef XBYAK64
 		put("cmpxchg16b", MEM);
+		put("fxrstor64", MEM);
 #endif
 		{
 			const char tbl[][8] = {
@@ -2423,6 +2500,7 @@ public:
 		putPushPop();
 		putTest();
 		separateFunc();
+		putLoadSeg();
 		putEtc();
 		putShift();
 		putShxd();
@@ -2447,7 +2525,6 @@ public:
 		putFpuMem32_64();
 		separateFunc();
 		putFpuMem16_32_64();
-		put("clflush", MEM); // current nasm is ok
 		putFpu();
 		putFpuFpu();
 		putCmp();

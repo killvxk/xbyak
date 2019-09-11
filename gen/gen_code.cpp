@@ -231,6 +231,18 @@ void putX_X_XM(bool omitOnly)
 	}
 }
 
+void putMemOp(const char *name, uint8 prefix, uint8 ext, uint8 code1, int code2, int bit = 32)
+{
+	printf("void %s(const Address& addr) { ", name);
+	if (prefix) printf("db(0x%02X); ", prefix);
+	printf("opModM(addr, Reg%d(%d), 0x%02X, 0x%02X); }\n", bit, ext, code1, code2);
+}
+
+void putLoadSeg(const char *name, uint8 code1, int code2 = NONE)
+{
+	printf("void %s(const Reg& reg, const Address& addr) { opLoadSeg(addr, reg, 0x%02X, 0x%02X); }\n", name, code1, code2);
+}
+
 void put()
 {
 	const int NO = CodeGenerator::NONE;
@@ -616,6 +628,22 @@ void put()
 			printf("void set%s(const Operand& op) { opR_ModM(op, 8, 0, 0x0F, 0x90 | %d); }%s\n", p->name, p->ext, msg);
 		}
 	}
+	{
+		const struct Tbl {
+			const char *name;
+			uint8 code;
+		} tbl[] = {
+			{ "loop", 0xE2 },
+			{ "loope", 0xE1 },
+			{ "loopne", 0xE0 },
+		};
+		for (size_t i = 0; i < NUM_OF_ARRAY(tbl); i++) {
+			const Tbl *p = &tbl[i];
+			printf("void %s(std::string label) { opJmp(label, T_SHORT, 0x%02X, 0, 0); }\n", p->name, p->code);
+			printf("void %s(const Label& label) { opJmp(label, T_SHORT, 0x%02X, 0, 0); }\n", p->name, p->code);
+			printf("void %s(const char *label) { %s(std::string(label)); }\n", p->name, p->name);
+		}
+	}
 	////////////////////////////////////////////////////////////////
 	{
 		const GenericTbl tbl[] = {
@@ -633,16 +661,28 @@ void put()
 			{ "cmpsb", 0xA6 },
 			{ "cmpsw", 0x66, 0xA7 },
 			{ "cmpsd", 0xA7 },
+			{ "int3", 0xCC },
 			{ "scasb", 0xAE },
 			{ "scasw", 0x66, 0xAF },
 			{ "scasd", 0xAF },
 			{ "movsb", 0xA4 },
+			{ "leave", 0xC9 },
+			{ "lodsb", 0xAC },
+			{ "lodsw", 0x66, 0xAD },
+			{ "lodsd", 0xAD },
 			{ "movsw", 0x66, 0xA5 },
 			{ "movsd", 0xA5 },
+			{ "outsb", 0x6E },
+			{ "outsw", 0x66, 0x6F },
+			{ "outsd", 0x6F },
 			{ "stosb", 0xAA },
 			{ "stosw", 0x66, 0xAB },
 			{ "stosd", 0xAB },
 			{ "rep", 0xF3 },
+			{ "repe", 0xF3 },
+			{ "repz", 0xF3 },
+			{ "repne", 0xF2 },
+			{ "repnz", 0xF2 },
 
 			{ "lahf", 0x9F },
 			{ "lock", 0xF0 },
@@ -651,6 +691,8 @@ void put()
 			{ "stc", 0xF9 },
 			{ "std", 0xFD },
 			{ "sti", 0xFB },
+			{ "sysenter", 0x0F, 0x34 },
+			{ "sysexit", 0x0F, 0x35 },
 
 			{ "emms", 0x0F, 0x77 },
 			{ "pause", 0xF3, 0x90 },
@@ -684,7 +726,8 @@ void put()
 			{ "fabs", 0xD9, 0xE1 },
 			{ "faddp", 0xDE, 0xC1 },
 			{ "fchs", 0xD9, 0xE0 },
-
+			{ "fclex", 0x9B, 0xDB, 0xE2 },
+			{ "fnclex", 0xDB, 0xE2 },
 			{ "fcom", 0xD8, 0xD1 },
 			{ "fcomp", 0xD8, 0xD9 },
 			{ "fcompp", 0xDE, 0xD9 },
@@ -726,6 +769,11 @@ void put()
 			{ "fyl2xp1", 0xD9, 0xF9 },
 		};
 		putGeneric(tbl, NUM_OF_ARRAY(tbl));
+		puts("void enter(uint16 x, uint8 y) { db(0xC8); dw(x); db(y); }");
+		puts("void int_(uint8 x) { db(0xCD); db(x); }");
+		putLoadSeg("lss", 0x0F, 0xB2);
+		putLoadSeg("lfs", 0x0F, 0xB4);
+		putLoadSeg("lgs", 0x0F, 0xB5);
 	}
 	{
 		const struct Tbl {
@@ -910,18 +958,33 @@ void put()
 			int code2;
 			uint8 ext;
 			const char *name;
+			uint8 prefix;
 		} tbl[] = {
-			{ 0x0F, 0xAE, 2, "ldmxcsr" },
-			{ 0x0F, 0xAE, 3, "stmxcsr" },
-			{ 0x0F, 0xAE, 7, "clflush" }, // 0x80 is bug of nasm ?
-			{ 0xD9, NONE, 5, "fldcw" },
-//			{ 0x9B, 0xD9, 7, "fstcw" }, // not correct order for fstcw [eax] on 64bit OS
+			{ 0x0F, 0xAE, 2, "ldmxcsr", 0 },
+			{ 0x0F, 0xAE, 3, "stmxcsr", 0 },
+			{ 0x0F, 0xAE, 7, "clflush", 0 },
+			{ 0x0F, 0xAE, 7, "clflushopt", 0x66 },
+			{ 0xDF, NONE, 4, "fbld", 0 },
+			{ 0xDF, NONE, 6, "fbstp", 0 },
+			{ 0xD9, NONE, 5, "fldcw", 0 },
+			{ 0xD9, NONE, 4, "fldenv", 0 },
+			{ 0xDD, NONE, 4, "frstor", 0 },
+			{ 0xDD, NONE, 6, "fsave", 0x9B },
+			{ 0xDD, NONE, 6, "fnsave", 0 },
+			{ 0xD9, NONE, 7, "fstcw", 0x9B },
+			{ 0xD9, NONE, 7, "fnstcw", 0 },
+			{ 0xD9, NONE, 6, "fstenv", 0x9B },
+			{ 0xD9, NONE, 6, "fnstenv", 0 },
+			{ 0xDD, NONE, 7, "fstsw", 0x9B },
+			{ 0xDD, NONE, 7, "fnstsw", 0 },
+			{ 0x0F, 0xAE, 1, "fxrstor", 0 },
 		};
 		for (size_t i = 0; i < NUM_OF_ARRAY(tbl); i++) {
 			const Tbl *p = &tbl[i];
-			printf("void %s(const Address& addr) { opModM(addr, Reg32(%d), 0x%02X, 0x%02X); }\n", p->name, p->ext, p->code1, p->code2);
+			putMemOp(p->name, p->prefix, p->ext, p->code1, p->code2);
 		}
-		printf("void fstcw(const Address& addr) { db(0x9B); opModM(addr, Reg32(7), 0xD9, NONE); }\n");
+		puts("void fstsw(const Reg16& r) { if (r.getIdx() != Operand::AX) throw Error(ERR_BAD_PARAMETER); db(0x9B); db(0xDF); db(0xE0); }");
+		puts("void fnstsw(const Reg16& r) { if (r.getIdx() != Operand::AX) throw Error(ERR_BAD_PARAMETER); db(0xDF); db(0xE0); }");
 	}
 	{
 		const struct Tbl {
@@ -949,6 +1012,12 @@ void put()
 			const Tbl *p = &tbl[i];
 			printf("void %s(const Reg& reg, const Operand& op) { opMovxx(reg, op, 0x%02X); }\n", p->name, p->code);
 		}
+	}
+	{ // in/out
+		puts("void in_(const Reg& a, uint8 v) { opInOut(a, 0xE4, v); }");
+		puts("void in_(const Reg& a, const Reg& d) { opInOut(a, d, 0xEC); }");
+		puts("void out_(uint8 v, const Reg& a) { opInOut(a, 0xE6, v); }");
+		puts("void out_(const Reg& d, const Reg& a) { opInOut(a, d, 0xEE); }");
 	}
 	// mpx
 	{
@@ -1669,6 +1738,7 @@ void put32()
 		{ "aas", 0x3F },
 		{ "daa", 0x27 },
 		{ "das", 0x2F },
+		{ "into", 0xCE },
 		{ "popad", 0x61 },
 		{ "popfd", 0x9D },
 		{ "pusha", 0x60 },
@@ -1677,6 +1747,8 @@ void put32()
 		{ "popa", 0x61 },
 	};
 	putGeneric(tbl, NUM_OF_ARRAY(tbl));
+	putLoadSeg("lds", 0xC5, NONE);
+	putLoadSeg("les", 0xC4, NONE);
 }
 
 void put64()
@@ -1688,13 +1760,19 @@ void put64()
 		{ "cdqe", 0x48, 0x98 },
 		{ "cqo", 0x48, 0x99 },
 		{ "cmpsq", 0x48, 0xA7 },
+		{ "popfq", 0x9D },
+		{ "pushfq", 0x9C },
+		{ "lodsq", 0x48, 0xAD },
 		{ "movsq", 0x48, 0xA5 },
 		{ "scasq", 0x48, 0xAF },
 		{ "stosq", 0x48, 0xAB },
+		{ "syscall", 0x0F, 0x05 },
+		{ "sysret", 0x0F, 0x07 },
 	};
 	putGeneric(tbl, NUM_OF_ARRAY(tbl));
 
-	puts("void cmpxchg16b(const Address& addr) { opModM(addr, Reg64(1), 0x0F, 0xC7); }");
+	putMemOp("cmpxchg16b", 0, 1, 0x0F, 0xC7, 64);
+	putMemOp("fxrstor64", 0, 1, 0x0F, 0xAE, 64);
 	puts("void movq(const Reg64& reg, const Mmx& mmx) { if (mmx.isXMM()) db(0x66); opModR(mmx, reg, 0x0F, 0x7E); }");
 	puts("void movq(const Mmx& mmx, const Reg64& reg) { if (mmx.isXMM()) db(0x66); opModR(mmx, reg, 0x0F, 0x6E); }");
 	puts("void movsxd(const Reg64& reg, const Operand& op) { if (!op.isBit(32)) throw Error(ERR_BAD_COMBINATION); opModRM(reg, op, op.isREG(), op.isMEM(), 0x63); }");

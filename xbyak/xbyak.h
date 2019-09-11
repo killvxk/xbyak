@@ -113,7 +113,7 @@ namespace Xbyak {
 
 enum {
 	DEFAULT_MAX_CODE_SIZE = 4096,
-	VERSION = 0x5800 /* 0xABCD = A.BC(D) */
+	VERSION = 0x5802 /* 0xABCD = A.BC(D) */
 };
 
 #ifndef MIE_INTEGER_TYPE_DEFINED
@@ -186,8 +186,8 @@ enum {
 	ERR_INVALID_ZERO,
 	ERR_INVALID_RIP_IN_AUTO_GROW,
 	ERR_INVALID_MIB_ADDRESS,
-	ERR_INTERNAL,
-	ERR_X2APIC_IS_NOT_SUPPORTED
+	ERR_X2APIC_IS_NOT_SUPPORTED,
+	ERR_INTERNAL, // last err
 };
 
 class Error : public std::exception {
@@ -1714,6 +1714,14 @@ private:
 		db(code0 | (reg.isBit(8) ? 0 : 1)); if (code1 != NONE) db(code1); if (code2 != NONE) db(code2);
 		opAddr(addr, reg.getIdx(), immSize);
 	}
+	void opLoadSeg(const Address& addr, const Reg& reg, int code0, int code1 = NONE)
+	{
+		if (addr.is64bitDisp()) throw Error(ERR_CANT_USE_64BIT_DISP);
+		if (reg.isBit(8)) throw Error(ERR_BAD_SIZE_OF_REGISTER);
+		rex(addr, reg);
+		db(code0); if (code1 != NONE) db(code1);
+		opAddr(addr, reg.getIdx());
+	}
 	void opMIB(const Address& addr, const Reg& reg, int code0, int code1)
 	{
 		if (addr.is64bitDisp()) throw Error(ERR_CANT_USE_64BIT_DISP);
@@ -2184,6 +2192,28 @@ private:
 		if (addr.hasZero()) throw Error(ERR_INVALID_ZERO);
 		if (addr.getRegExp().getIndex().getKind() != kind) throw Error(ERR_BAD_VSIB_ADDRESSING);
 		opVex(x, 0, addr, type, code);
+	}
+	void opInOut(const Reg& a, const Reg& d, uint8 code)
+	{
+		if (a.getIdx() == Operand::AL && d.getIdx() == Operand::DX && d.getBit() == 16) {
+			switch (a.getBit()) {
+			case 8: db(code); return;
+			case 16: db(0x66); db(code + 1); return;
+			case 32: db(code + 1); return;
+			}
+		}
+		throw Error(ERR_BAD_COMBINATION);
+	}
+	void opInOut(const Reg& a, uint8 code, uint8 v)
+	{
+		if (a.getIdx() == Operand::AL) {
+			switch (a.getBit()) {
+			case 8: db(code); db(v); return;
+			case 16: db(0x66); db(code + 1); db(v); return;
+			case 32: db(code + 1); db(v); return;
+			}
+		}
+		throw Error(ERR_BAD_COMBINATION);
 	}
 public:
 	unsigned int getVersion() const { return VERSION; }
