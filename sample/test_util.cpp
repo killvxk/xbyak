@@ -1,12 +1,13 @@
 #include <stdio.h>
-#define XBYAK_NO_OP_NAMES
 #include "xbyak/xbyak_util.h"
 
 #define NUM_OF_ARRAY(x) (sizeof(x) / sizeof(x[0]))
 
 struct PopCountTest : public Xbyak::CodeGenerator {
 	PopCountTest(int n)
+		: Xbyak::CodeGenerator(4096, Xbyak::DontSetProtectRWE)
 	{
+ret();
 		mov(eax, n);
 		popcnt(eax, eax);
 		ret();
@@ -34,8 +35,6 @@ void putCPUinfo()
 		{ Cpu::tPOPCNT, "popcnt" },
 		{ Cpu::t3DN, "3dn" },
 		{ Cpu::tE3DN, "e3dn" },
-		{ Cpu::tSSE4a, "sse4a" },
-		{ Cpu::tSSE5, "sse5" },
 		{ Cpu::tAESNI, "aesni" },
 		{ Cpu::tRDTSCP, "rdtscp" },
 		{ Cpu::tOSXSAVE, "osxsave(xgetvb)" },
@@ -80,6 +79,11 @@ void putCPUinfo()
 		{ Cpu::tAVX512_VPOPCNTDQ, "avx512_vpopcntdq" },
 		{ Cpu::tAVX512_BF16, "avx512_bf16" },
 		{ Cpu::tAVX512_VP2INTERSECT, "avx512_vp2intersect" },
+		{ Cpu::tAMX_TILE, "amx(tile)" },
+		{ Cpu::tAMX_INT8, "amx(int8)" },
+		{ Cpu::tAMX_BF16, "amx(bf16)" },
+		{ Cpu::tAVX_VNNI, "avx_vnni" },
+		{ Cpu::tAVX512_FP16, "avx512_fp16" },
 	};
 	for (size_t i = 0; i < NUM_OF_ARRAY(tbl); i++) {
 		if (cpu.has(tbl[i].type)) printf(" %s", tbl[i].str);
@@ -88,12 +92,16 @@ void putCPUinfo()
 	if (cpu.has(Cpu::tPOPCNT)) {
 		const int n = 0x12345678; // bitcount = 13
 		const int ok = 13;
-		int r = PopCountTest(n).getCode<int (*)()>()();
+		PopCountTest code(n);
+		code.setProtectModeRE();
+		int (*f)() = code.getCode<int (*)()>();
+		int r = f();
 		if (r == ok) {
 			puts("popcnt ok");
 		} else {
 			printf("popcnt ng %d %d\n", r, ok);
 		}
+		code.setProtectModeRW();
 	}
 	/*
 		                displayFamily displayModel
