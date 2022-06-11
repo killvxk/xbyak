@@ -1,4 +1,4 @@
-const char *getVersionString() const { return "6.00"; }
+const char *getVersionString() const { return "6.60"; }
 void adc(const Operand& op, uint32_t imm) { opRM_I(op, imm, 0x10, 2); }
 void adc(const Operand& op1, const Operand& op2) { opRM_RM(op1, op2, 0x10); }
 void adcx(const Reg32e& reg, const Operand& op) { opGen(reg, op, 0xF6, 0x66, isREG32_REG32orMEM, NONE, 0x38); }
@@ -57,9 +57,11 @@ void cbw() { db(0x66); db(0x98); }
 void cdq() { db(0x99); }
 void clc() { db(0xF8); }
 void cld() { db(0xFC); }
+void cldemote(const Address& addr) { opMIB(addr, eax, 0x0F, 0x1C); }
 void clflush(const Address& addr) { opModM(addr, Reg32(7), 0x0F, 0xAE); }
 void clflushopt(const Address& addr) { db(0x66); opModM(addr, Reg32(7), 0x0F, 0xAE); }
 void cli() { db(0xFA); }
+void clwb(const Address& addr) { db(0x66); opMIB(addr, esi, 0x0F, 0xAE); }
 void clzero() { db(0x0F); db(0x01); db(0xFC); }
 void cmc() { db(0xF5); }
 void cmova(const Reg& reg, const Operand& op) { opModRM(reg, op, op.isREG(16 | i32e), op.isMEM(), 0x0F, 0x40 | 7); }//-V524
@@ -323,6 +325,7 @@ void gf2p8affineqb(const Xmm& xmm, const Operand& op, int imm) { opGen(xmm, op, 
 void gf2p8mulb(const Xmm& xmm, const Operand& op) { opGen(xmm, op, 0xCF, 0x66, isXMM_XMMorMEM, NONE, 0x38); }
 void haddpd(const Xmm& xmm, const Operand& op) { opGen(xmm, op, 0x7C, 0x66, isXMM_XMMorMEM); }
 void haddps(const Xmm& xmm, const Operand& op) { opGen(xmm, op, 0x7C, 0xF2, isXMM_XMMorMEM); }
+void hlt() { db(0xF4); }
 void hsubpd(const Xmm& xmm, const Operand& op) { opGen(xmm, op, 0x7D, 0x66, isXMM_XMMorMEM); }
 void hsubps(const Xmm& xmm, const Operand& op) { opGen(xmm, op, 0x7D, 0xF2, isXMM_XMMorMEM); }
 void idiv(const Operand& op) { opR_ModM(op, 0, 7, 0xF6); }
@@ -500,6 +503,8 @@ void movd(const Mmx& mmx, const Address& addr) { if (mmx.isXMM()) db(0x66); opMo
 void movd(const Mmx& mmx, const Reg32& reg) { if (mmx.isXMM()) db(0x66); opModR(mmx, reg, 0x0F, 0x6E); }
 void movd(const Reg32& reg, const Mmx& mmx) { if (mmx.isXMM()) db(0x66); opModR(mmx, reg, 0x0F, 0x7E); }
 void movddup(const Xmm& xmm, const Operand& op) { opGen(xmm, op, 0x12, 0xF2, isXMM_XMMorMEM, NONE, NONE); }
+void movdir64b(const Reg& reg, const Address& addr) { db(0x66); opModM(addr, reg.cvt32(), 0x0F, 0x38, 0xF8); }
+void movdiri(const Address& addr, const Reg32e& reg) { opModM(addr, reg, 0x0F, 0x38, 0xF9); }
 void movdq2q(const Mmx& mmx, const Xmm& xmm) { db(0xF2); opModR(mmx, xmm, 0x0F, 0xD6); }
 void movdqa(const Address& addr, const Xmm& xmm) { db(0x66); opModM(addr, xmm, 0x0F, 0x7F); }
 void movdqa(const Xmm& xmm, const Operand& op) { opMMX(xmm, op, 0x6F, 0x66); }
@@ -719,6 +724,7 @@ void repne() { db(0xF2); }
 void repnz() { db(0xF2); }
 void repz() { db(0xF3); }
 void ret(int imm = 0) { if (imm) { db(0xC2); dw(imm); } else { db(0xC3); } }
+void retf(int imm = 0) { if (imm) { db(0xCA); dw(imm); } else { db(0xCB); } }
 void rol(const Operand& op, const Reg8& _cl) { opShift(op, _cl, 0); }
 void rol(const Operand& op, int imm) { opShift(op, imm, 0); }
 void ror(const Operand& op, const Reg8& _cl) { opShift(op, _cl, 1); }
@@ -811,10 +817,13 @@ void subsd(const Xmm& xmm, const Operand& op) { opGen(xmm, op, 0x5C, 0xF2, isXMM
 void subss(const Xmm& xmm, const Operand& op) { opGen(xmm, op, 0x5C, 0xF3, isXMM_XMMorMEM); }
 void sysenter() { db(0x0F); db(0x34); }
 void sysexit() { db(0x0F); db(0x35); }
+void tpause(const Reg32& r) { int idx = r.getIdx(); if (idx > 7) XBYAK_THROW(ERR_BAD_PARAMETER) db(0x66); db(0x0F); db(0xAE); setModRM(3, 6, idx); }
 void tzcnt(const Reg&reg, const Operand& op) { opSp1(reg, op, 0xF3, 0x0F, 0xBC); }
 void ucomisd(const Xmm& xmm, const Operand& op) { opGen(xmm, op, 0x2E, 0x66, isXMM_XMMorMEM); }
 void ucomiss(const Xmm& xmm, const Operand& op) { opGen(xmm, op, 0x2E, 0x100, isXMM_XMMorMEM); }
 void ud2() { db(0x0F); db(0x0B); }
+void umonitor(const Reg& r) { int idx = r.getIdx(); if (idx > 7) XBYAK_THROW(ERR_BAD_PARAMETER) int bit = r.getBit(); if (BIT != bit) { if ((BIT == 32 && bit == 16) || (BIT == 64 && bit == 32)) { db(0x67); } else { XBYAK_THROW(ERR_BAD_SIZE_OF_REGISTER) } } db(0xF3); db(0x0F); db(0xAE); setModRM(3, 6, idx); }
+void umwait(const Reg32& r) { int idx = r.getIdx(); if (idx > 7) XBYAK_THROW(ERR_BAD_PARAMETER) db(0xF2); db(0x0F); db(0xAE); setModRM(3, 6, idx); }
 void unpckhpd(const Xmm& xmm, const Operand& op) { opGen(xmm, op, 0x15, 0x66, isXMM_XMMorMEM); }
 void unpckhps(const Xmm& xmm, const Operand& op) { opGen(xmm, op, 0x15, 0x100, isXMM_XMMorMEM); }
 void unpcklpd(const Xmm& xmm, const Operand& op) { opGen(xmm, op, 0x14, 0x66, isXMM_XMMorMEM); }

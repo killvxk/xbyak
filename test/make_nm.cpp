@@ -512,6 +512,7 @@ class Test {
 			"cmpsb",
 			"cmpsw",
 			"cmpsd",
+			"hlt",
 			"int3",
 			"leave",
 			"lodsb",
@@ -636,6 +637,7 @@ class Test {
 				"fstsw",
 				"fnstsw",
 				"fxrstor",
+				"clwb",
 			};
 			for (size_t i = 0; i < NUM_OF_ARRAY(memTbl); i++) {
 				put(memTbl[i], MEM);
@@ -698,6 +700,24 @@ class Test {
 			puts("pshufb xmm14, [rel label0]");
 		}
 #endif
+#endif
+	}
+	void putFarJmp() const
+	{
+#ifdef XBYAK64
+		put("jmp", "word[rax],T_FAR", "far word [rax]");
+		put("jmp", "dword[rax],T_FAR", "far dword [rax]");
+		put("jmp", "qword[rax],T_FAR", "far qword [rax]");
+
+		put("call", "word[rax],T_FAR", "far word [rax]");
+		put("call", "dword[rax],T_FAR", "far dword [rax]");
+		put("call", "qword[rax],T_FAR", "far qword [rax]");
+#else
+		put("jmp", "dword[eax],T_FAR", "far dword [eax]");
+		put("jmp", "word[eax],T_FAR", "far word [eax]");
+
+		put("call", "dword[eax],T_FAR", "far dword [eax]");
+		put("call", "word[eax],T_FAR", "far word [eax]");
 #endif
 	}
 	void putMMX1() const
@@ -1250,11 +1270,18 @@ class Test {
 		put("mov", REG64, "0x12345678", "0x12345678");
 		put("mov", REG64, "0xffffffff12345678LL", "0xffffffff12345678");
 		put("mov", REG32e|REG16|REG8|RAX|EAX|AX|AL, IMM);
+
+		put("mov", EAX, "ptr[(void*)-1]", "[-1]");
+		put("mov", EAX, "ptr[(void*)0x7fffffff]", "[0x7fffffff]");
+		put("mov", EAX, "ptr[(void*)0xffffffffffffffff]", "[0xffffffffffffffff]");
 	}
 	void putEtc() const
 	{
 		{
 			const char *p = "ret";
+			put(p);
+			put(p, IMM);
+			p = "retf";
 			put(p);
 			put(p, IMM);
 			p = "mov";
@@ -1493,6 +1520,7 @@ class Test {
 		put("pextrq", REG64|MEM, XMM, IMM);
 		put("pinsrq", XMM, REG64|MEM, IMM);
 #endif
+
 	}
 	void putSHA() const
 	{
@@ -2529,6 +2557,7 @@ public:
 #else // USE_AVX
 
 		putJmp();
+		putFarJmp();
 
 #ifdef USE_YASM
 

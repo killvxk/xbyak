@@ -1,8 +1,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <string>
-#define XBYAK_NO_OP_NAMES
 #include <xbyak/xbyak.h>
+#include <xbyak/xbyak_util.h>
 #include <cybozu/inttype.hpp>
 #include <cybozu/test.hpp>
 
@@ -22,6 +22,22 @@ CYBOZU_TEST_AUTO(setSize)
 		}
 	} code;
 }
+
+#ifdef XBYAK64
+CYBOZU_TEST_AUTO(badSSE)
+{
+	struct Code : Xbyak::CodeGenerator {
+		Code()
+		{
+			CYBOZU_TEST_EXCEPTION(paddd(xm16, xm1), Xbyak::Error);
+			CYBOZU_TEST_EXCEPTION(pslld(xm16, 1), Xbyak::Error);
+			CYBOZU_TEST_EXCEPTION(movapd(xm16, xm1), Xbyak::Error);
+			CYBOZU_TEST_EXCEPTION(movhpd(xm16, ptr[eax]), Xbyak::Error);
+			CYBOZU_TEST_EXCEPTION(pextrb(eax, xm16, 1), Xbyak::Error);
+		}
+	} code;
+}
+#endif
 
 CYBOZU_TEST_AUTO(compOperand)
 {
@@ -79,6 +95,17 @@ CYBOZU_TEST_AUTO(mov_const)
 					CYBOZU_TEST_NO_EXCEPTION(mov(af[eax], v));
 				}
 			}
+#ifdef XBYAK64
+			CYBOZU_TEST_NO_EXCEPTION(mov(rax, ptr[(void*)0x7fffffff]));
+			CYBOZU_TEST_EXCEPTION(mov(rax, ptr[(void*)0x17fffffff]), Xbyak::Error);
+#ifdef XBYAK_OLD_DISP_CHECK
+			CYBOZU_TEST_NO_EXCEPTION(mov(rax, ptr[(void*)0x80000000]));
+			CYBOZU_TEST_NO_EXCEPTION(mov(rax, ptr[(void*)0xffffffff]));
+#else
+			CYBOZU_TEST_EXCEPTION(mov(rax, ptr[(void*)0x80000000ull]), Xbyak::Error);
+			CYBOZU_TEST_EXCEPTION(mov(rax, ptr[(void*)0xffffffffull]), Xbyak::Error);
+#endif
+#endif
 		}
 	} code;
 }
@@ -1863,3 +1890,88 @@ CYBOZU_TEST_AUTO(vaddph)
 	CYBOZU_TEST_EQUAL_ARRAY(c.getCode(), tbl, n);
 }
 #endif
+
+CYBOZU_TEST_AUTO(waitpkg)
+{
+	struct Code : Xbyak::CodeGenerator {
+		Code()
+		{
+			tpause(eax);
+			tpause(ebx);
+#ifdef XBYAK32
+			umonitor(cx);
+			umonitor(ecx);
+#else
+			umonitor(ecx);
+			umonitor(rcx);
+#endif
+			umwait(eax);
+			umwait(ebx);
+		}
+	} c;
+	const uint8_t tbl[] = {
+		// tpause
+		0x66, 0x0f, 0xae, 0xf0,
+		0x66, 0x0f, 0xae, 0xf3,
+		// umonitor
+		0x67, 0xf3, 0x0f, 0xae, 0xf1,
+		0xf3, 0x0f, 0xae, 0xf1,
+		// tpause
+		0xf2, 0x0f, 0xae, 0xf0,
+		0xf2, 0x0f, 0xae, 0xf3,
+	};
+	const size_t n = sizeof(tbl) / sizeof(tbl[0]);
+	CYBOZU_TEST_EQUAL(c.getSize(), n);
+	CYBOZU_TEST_EQUAL_ARRAY(c.getCode(), tbl, n);
+}
+
+CYBOZU_TEST_AUTO(misc)
+{
+	struct Code : Xbyak::CodeGenerator {
+		Code()
+		{
+			cldemote(ptr[eax+esi*4+0x12]);
+			movdiri(ptr[edx+esi*2+4], eax);
+			movdir64b(eax, ptr[edx]);
+#ifdef XBYAK64
+			cldemote(ptr[rax+rdi*8+0x123]);
+			movdiri(ptr[rax+r12], r9);
+			movdiri(ptr[rax+r12*2+4], r9d);
+			movdir64b(r10, ptr[r8]);
+#endif
+		}
+	} c;
+	const uint8_t tbl[] = {
+#ifdef XBYAK64
+		0x67,
+#endif
+		0x0f, 0x1c, 0x44, 0xb0, 0x12, // cldemote
+#ifdef XBYAK64
+		0x67,
+#endif
+		0x0f, 0x38, 0xf9, 0x44, 0x72, 0x04, // movdiri
+
+		0x66,
+#ifdef XBYAK64
+		0x67,
+#endif
+		0x0f, 0x38, 0xf8, 0x02, // movdir64b
+#ifdef XBYAK64
+		0x0f, 0x1c, 0x84, 0xf8, 0x23, 0x01, 0x00, 0x00, // cldemote
+		0x4e, 0x0f, 0x38, 0xf9, 0x0c, 0x20, // movdiri
+		0x46, 0x0f, 0x38, 0xf9, 0x4c, 0x60, 0x04, // movdiri
+		0x66, 0x45, 0x0f, 0x38, 0xf8, 0x10, // movdir64b
+#endif
+	};
+	const size_t n = sizeof(tbl) / sizeof(tbl[0]);
+	CYBOZU_TEST_EQUAL(c.getSize(), n);
+	CYBOZU_TEST_EQUAL_ARRAY(c.getCode(), tbl, n);
+}
+
+CYBOZU_TEST_AUTO(cpu)
+{
+	// https://github.com/herumi/xbyak/issues/148
+	using namespace Xbyak::util;
+	Cpu cpu;
+	CYBOZU_TEST_EQUAL(cpu.has(Cpu::tINTEL) && cpu.has(Cpu::tAMD), cpu.has(Cpu::tINTEL | Cpu::tAMD));
+}

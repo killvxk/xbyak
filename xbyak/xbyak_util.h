@@ -27,7 +27,7 @@
 
 #ifdef XBYAK_INTEL_CPU_SPECIFIC
 #ifdef _WIN32
-	#if (_MSC_VER < 1400) && defined(XBYAK32)
+	#if defined(_MSC_VER) && (_MSC_VER < 1400) && defined(XBYAK32)
 		static inline __declspec(naked) void __cpuid(int[4], int)
 		{
 			__asm {
@@ -87,32 +87,64 @@ typedef enum {
    CoreLevel = 2
 } IntelCpuTopologyLevel;
 
+namespace local {
+
+template<uint64_t L, uint64_t H = 0>
+struct TypeT {
+};
+
+template<uint64_t L1, uint64_t H1, uint64_t L2, uint64_t H2>
+TypeT<L1 | L2, H1 | H2> operator|(TypeT<L1, H1>, TypeT<L2, H2>) { return TypeT<L1 | L2, H1 | H2>(); }
+
+} // local
+
 /**
 	CPU detection class
+	@note static inline const member is supported by c++17 or later, so use template hack
 */
 class Cpu {
-	uint64_t type_;
+public:
+	class Type {
+		uint64_t L;
+		uint64_t H;
+	public:
+		Type(uint64_t L = 0, uint64_t H = 0) : L(L), H(H) { }
+		template<uint64_t L_, uint64_t H_>
+		Type(local::TypeT<L_, H_>) : L(L_), H(H_) {}
+		Type& operator&=(const Type& rhs) { L &= rhs.L; H &= rhs.H; return *this; }
+		Type& operator|=(const Type& rhs) { L |= rhs.L; H |= rhs.H; return *this; }
+		Type operator&(const Type& rhs) const { Type t = *this; t &= rhs; return t; }
+		Type operator|(const Type& rhs) const { Type t = *this; t |= rhs; return t; }
+		bool operator==(const Type& rhs) const { return H == rhs.H && L == rhs.L; }
+		bool operator!=(const Type& rhs) const { return !operator==(rhs); }
+		// without explicit because backward compatilibity
+		operator bool() const { return (H | L) != 0; }
+		uint64_t getL() const { return L; }
+		uint64_t getH() const { return H; }
+	};
+private:
+	Type type_;
 	//system topology
 	bool x2APIC_supported_;
 	static const size_t maxTopologyLevels = 2;
-	unsigned int numCores_[maxTopologyLevels];
+	uint32_t numCores_[maxTopologyLevels];
 
-	static const unsigned int maxNumberCacheLevels = 10;
-	unsigned int dataCacheSize_[maxNumberCacheLevels];
-	unsigned int coresSharignDataCache_[maxNumberCacheLevels];
-	unsigned int dataCacheLevels_;
+	static const uint32_t maxNumberCacheLevels = 10;
+	uint32_t dataCacheSize_[maxNumberCacheLevels];
+	uint32_t coresSharignDataCache_[maxNumberCacheLevels];
+	uint32_t dataCacheLevels_;
 
-	unsigned int get32bitAsBE(const char *x) const
+	uint32_t get32bitAsBE(const char *x) const
 	{
 		return x[0] | (x[1] << 8) | (x[2] << 16) | (x[3] << 24);
 	}
-	unsigned int mask(int n) const
+	uint32_t mask(int n) const
 	{
 		return (1U << n) - 1;
 	}
 	void setFamily()
 	{
-		unsigned int data[4] = {};
+		uint32_t data[4] = {};
 		getCpuid(1, data);
 		stepping = data[0] & mask(4);
 		model = (data[0] >> 4) & mask(4);
@@ -131,15 +163,15 @@ class Cpu {
 			displayModel = model;
 		}
 	}
-	unsigned int extractBit(unsigned int val, unsigned int base, unsigned int end)
+	uint32_t extractBit(uint32_t val, uint32_t base, uint32_t end)
 	{
 		return (val >> base) & ((1u << (end - base)) - 1);
 	}
 	void setNumCores()
 	{
-		if ((type_ & tINTEL) == 0) return;
+		if (!has(tINTEL)) return;
 
-		unsigned int data[4] = {};
+		uint32_t data[4] = {};
 
 		 /* CAUTION: These numbers are configuration as shipped by Intel. */
 		getCpuidEx(0x0, 0, data);
@@ -151,7 +183,7 @@ class Cpu {
 				leaf 0xB can be zeroed-out by a hypervisor
 			*/
 			x2APIC_supported_ = true;
-			for (unsigned int i = 0; i < maxTopologyLevels; i++) {
+			for (uint32_t i = 0; i < maxTopologyLevels; i++) {
 				getCpuidEx(0xB, i, data);
 				IntelCpuTopologyLevel level = (IntelCpuTopologyLevel)extractBit(data[2], 8, 15);
 				if (level == SmtLevel || level == CoreLevel) {
@@ -175,14 +207,14 @@ class Cpu {
 	}
 	void setCacheHierarchy()
 	{
-		if ((type_ & tINTEL) == 0) return;
-		const unsigned int NO_CACHE = 0;
-		const unsigned int DATA_CACHE = 1;
-//		const unsigned int INSTRUCTION_CACHE = 2;
-		const unsigned int UNIFIED_CACHE = 3;
-		unsigned int smt_width = 0;
-		unsigned int logical_cores = 0;
-		unsigned int data[4] = {};
+		if (!has(tINTEL)) return;
+		const uint32_t NO_CACHE = 0;
+		const uint32_t DATA_CACHE = 1;
+//		const uint32_t INSTRUCTION_CACHE = 2;
+		const uint32_t UNIFIED_CACHE = 3;
+		uint32_t smt_width = 0;
+		uint32_t logical_cores = 0;
+		uint32_t data[4] = {};
 
 		if (x2APIC_supported_) {
 			smt_width = numCores_[0];
@@ -200,10 +232,10 @@ class Cpu {
 		*/
 		for (int i = 0; dataCacheLevels_ < maxNumberCacheLevels; i++) {
 			getCpuidEx(0x4, i, data);
-			unsigned int cacheType = extractBit(data[0], 0, 4);
+			uint32_t cacheType = extractBit(data[0], 0, 4);
 			if (cacheType == NO_CACHE) break;
 			if (cacheType == DATA_CACHE || cacheType == UNIFIED_CACHE) {
-				unsigned int actual_logical_cores = extractBit(data[0], 14, 25) + 1;
+				uint32_t actual_logical_cores = extractBit(data[0], 14, 25) + 1;
 				if (logical_cores != 0) { // true only if leaf 0xB is supported and valid
 					actual_logical_cores = (std::min)(actual_logical_cores, logical_cores);
 				}
@@ -230,7 +262,7 @@ public:
 	int displayFamily; // family + extFamily
 	int displayModel; // model + extModel
 
-	unsigned int getNumCores(IntelCpuTopologyLevel level) const {
+	uint32_t getNumCores(IntelCpuTopologyLevel level) const {
 		if (!x2APIC_supported_) XBYAK_THROW_RET(ERR_X2APIC_IS_NOT_SUPPORTED, 0)
 		switch (level) {
 		case SmtLevel: return numCores_[level - 1];
@@ -239,13 +271,13 @@ public:
 		}
 	}
 
-	unsigned int getDataCacheLevels() const { return dataCacheLevels_; }
-	unsigned int getCoresSharingDataCache(unsigned int i) const
+	uint32_t getDataCacheLevels() const { return dataCacheLevels_; }
+	uint32_t getCoresSharingDataCache(uint32_t i) const
 	{
 		if (i >= dataCacheLevels_) XBYAK_THROW_RET(ERR_BAD_PARAMETER, 0)
 		return coresSharignDataCache_[i];
 	}
-	unsigned int getDataCacheSize(unsigned int i) const
+	uint32_t getDataCacheSize(uint32_t i) const
 	{
 		if (i >= dataCacheLevels_) XBYAK_THROW_RET(ERR_BAD_PARAMETER, 0)
 		return dataCacheSize_[i];
@@ -254,7 +286,7 @@ public:
 	/*
 		data[] = { eax, ebx, ecx, edx }
 	*/
-	static inline void getCpuid(unsigned int eaxIn, unsigned int data[4])
+	static inline void getCpuid(uint32_t eaxIn, uint32_t data[4])
 	{
 #ifdef XBYAK_INTEL_CPU_SPECIFIC
 	#ifdef _WIN32
@@ -267,10 +299,10 @@ public:
 		(void)data;
 #endif
 	}
-	static inline void getCpuidEx(unsigned int eaxIn, unsigned int ecxIn, unsigned int data[4])
+	static inline void getCpuidEx(uint32_t eaxIn, uint32_t ecxIn, uint32_t data[4])
 	{
 #ifdef XBYAK_INTEL_CPU_SPECIFIC
-	#ifdef _WIN32
+	#ifdef _MSC_VER
 		__cpuidex(reinterpret_cast<int*>(data), eaxIn, ecxIn);
 	#else
 		__cpuid_count(eaxIn, ecxIn, data[0], data[1], data[2], data[3]);
@@ -287,7 +319,7 @@ public:
 	#ifdef _MSC_VER
 		return _xgetbv(0);
 	#else
-		unsigned int eax, edx;
+		uint32_t eax, edx;
 		// xgetvb is not support on gcc 4.2
 //		__asm__ volatile("xgetbv" : "=a"(eax), "=d"(edx) : "c"(0));
 		__asm__ volatile(".byte 0x0f, 0x01, 0xd0" : "=a"(eax), "=d"(edx) : "c"(0));
@@ -297,77 +329,78 @@ public:
 		return 0;
 #endif
 	}
-	typedef uint64_t Type;
 
-	static const Type NONE = 0;
-	static const Type tMMX = 1 << 0;
-	static const Type tMMX2 = 1 << 1;
-	static const Type tCMOV = 1 << 2;
-	static const Type tSSE = 1 << 3;
-	static const Type tSSE2 = 1 << 4;
-	static const Type tSSE3 = 1 << 5;
-	static const Type tSSSE3 = 1 << 6;
-	static const Type tSSE41 = 1 << 7;
-	static const Type tSSE42 = 1 << 8;
-	static const Type tPOPCNT = 1 << 9;
-	static const Type tAESNI = 1 << 10;
-	static const Type tOSXSAVE = 1 << 12;
-	static const Type tPCLMULQDQ = 1 << 13;
-	static const Type tAVX = 1 << 14;
-	static const Type tFMA = 1 << 15;
-
-	static const Type t3DN = 1 << 16;
-	static const Type tE3DN = 1 << 17;
-	static const Type tRDTSCP = 1 << 19;
-	static const Type tAVX2 = 1 << 20;
-	static const Type tBMI1 = 1 << 21; // andn, bextr, blsi, blsmsk, blsr, tzcnt
-	static const Type tBMI2 = 1 << 22; // bzhi, mulx, pdep, pext, rorx, sarx, shlx, shrx
-	static const Type tLZCNT = 1 << 23;
-
-	static const Type tINTEL = 1 << 24;
-	static const Type tAMD = 1 << 25;
-
-	static const Type tENHANCED_REP = 1 << 26; // enhanced rep movsb/stosb
-	static const Type tRDRAND = 1 << 27;
-	static const Type tADX = 1 << 28; // adcx, adox
-	static const Type tRDSEED = 1 << 29; // rdseed
-	static const Type tSMAP = 1 << 30; // stac
-	static const Type tHLE = uint64_t(1) << 31; // xacquire, xrelease, xtest
-	static const Type tRTM = uint64_t(1) << 32; // xbegin, xend, xabort
-	static const Type tF16C = uint64_t(1) << 33; // vcvtph2ps, vcvtps2ph
-	static const Type tMOVBE = uint64_t(1) << 34; // mobve
-	static const Type tAVX512F = uint64_t(1) << 35;
-	static const Type tAVX512DQ = uint64_t(1) << 36;
-	static const Type tAVX512_IFMA = uint64_t(1) << 37;
-	static const Type tAVX512IFMA = tAVX512_IFMA;
-	static const Type tAVX512PF = uint64_t(1) << 38;
-	static const Type tAVX512ER = uint64_t(1) << 39;
-	static const Type tAVX512CD = uint64_t(1) << 40;
-	static const Type tAVX512BW = uint64_t(1) << 41;
-	static const Type tAVX512VL = uint64_t(1) << 42;
-	static const Type tAVX512_VBMI = uint64_t(1) << 43;
-	static const Type tAVX512VBMI = tAVX512_VBMI; // changed by Intel's manual
-	static const Type tAVX512_4VNNIW = uint64_t(1) << 44;
-	static const Type tAVX512_4FMAPS = uint64_t(1) << 45;
-	static const Type tPREFETCHWT1 = uint64_t(1) << 46;
-	static const Type tPREFETCHW = uint64_t(1) << 47;
-	static const Type tSHA = uint64_t(1) << 48;
-	static const Type tMPX = uint64_t(1) << 49;
-	static const Type tAVX512_VBMI2 = uint64_t(1) << 50;
-	static const Type tGFNI = uint64_t(1) << 51;
-	static const Type tVAES = uint64_t(1) << 52;
-	static const Type tVPCLMULQDQ = uint64_t(1) << 53;
-	static const Type tAVX512_VNNI = uint64_t(1) << 54;
-	static const Type tAVX512_BITALG = uint64_t(1) << 55;
-	static const Type tAVX512_VPOPCNTDQ = uint64_t(1) << 56;
-	static const Type tAVX512_BF16 = uint64_t(1) << 57;
-	static const Type tAVX512_VP2INTERSECT = uint64_t(1) << 58;
-	static const Type tAMX_TILE = uint64_t(1) << 59;
-	static const Type tAMX_INT8 = uint64_t(1) << 60;
-	static const Type tAMX_BF16 = uint64_t(1) << 61;
-	static const Type tAVX_VNNI = uint64_t(1) << 62;
-	static const Type tAVX512_FP16 = uint64_t(1) << 11;
-	// 18, 63
+	static const local::TypeT<0> NONE;
+	static const local::TypeT<1 << 0> tMMX;
+	static const local::TypeT<1 << 1> tMMX2;
+	static const local::TypeT<1 << 2> tCMOV;
+	static const local::TypeT<1 << 3> tSSE;
+	static const local::TypeT<1 << 4> tSSE2;
+	static const local::TypeT<1 << 5> tSSE3;
+	static const local::TypeT<1 << 6> tSSSE3;
+	static const local::TypeT<1 << 7> tSSE41;
+	static const local::TypeT<1 << 8> tSSE42;
+	static const local::TypeT<1 << 9> tPOPCNT;
+	static const local::TypeT<1 << 10> tAESNI;
+	static const local::TypeT<1 << 11> tAVX512_FP16;
+	static const local::TypeT<1 << 12> tOSXSAVE;
+	static const local::TypeT<1 << 13> tPCLMULQDQ;
+	static const local::TypeT<1 << 14> tAVX;
+	static const local::TypeT<1 << 15> tFMA;
+	static const local::TypeT<1 << 16> t3DN;
+	static const local::TypeT<1 << 17> tE3DN;
+	static const local::TypeT<1 << 18> tWAITPKG;
+	static const local::TypeT<1 << 19> tRDTSCP;
+	static const local::TypeT<1 << 20> tAVX2;
+	static const local::TypeT<1 << 21> tBMI1; // andn, bextr, blsi, blsmsk, blsr, tzcnt
+	static const local::TypeT<1 << 22> tBMI2; // bzhi, mulx, pdep, pext, rorx, sarx, shlx, shrx
+	static const local::TypeT<1 << 23> tLZCNT;
+	static const local::TypeT<1 << 24> tINTEL;
+	static const local::TypeT<1 << 25> tAMD;
+	static const local::TypeT<1 << 26> tENHANCED_REP; // enhanced rep movsb/stosb
+	static const local::TypeT<1 << 27> tRDRAND;
+	static const local::TypeT<1 << 28> tADX; // adcx, adox
+	static const local::TypeT<1 << 29> tRDSEED; // rdseed
+	static const local::TypeT<1 << 30> tSMAP; // stac
+	static const local::TypeT<uint64_t(1) << 31> tHLE; // xacquire, xrelease, xtest
+	static const local::TypeT<uint64_t(1) << 32> tRTM; // xbegin, xend, xabort
+	static const local::TypeT<uint64_t(1) << 33> tF16C; // vcvtph2ps, vcvtps2ph
+	static const local::TypeT<uint64_t(1) << 34> tMOVBE; // mobve
+	static const local::TypeT<uint64_t(1) << 35> tAVX512F;
+	static const local::TypeT<uint64_t(1) << 36> tAVX512DQ;
+	static const local::TypeT<uint64_t(1) << 37> tAVX512_IFMA;
+	static const local::TypeT<uint64_t(1) << 37> tAVX512IFMA;// = tAVX512_IFMA;
+	static const local::TypeT<uint64_t(1) << 38> tAVX512PF;
+	static const local::TypeT<uint64_t(1) << 39> tAVX512ER;
+	static const local::TypeT<uint64_t(1) << 40> tAVX512CD;
+	static const local::TypeT<uint64_t(1) << 41> tAVX512BW;
+	static const local::TypeT<uint64_t(1) << 42> tAVX512VL;
+	static const local::TypeT<uint64_t(1) << 43> tAVX512_VBMI;
+	static const local::TypeT<uint64_t(1) << 43> tAVX512VBMI; // = tAVX512_VBMI; // changed by Intel's manual
+	static const local::TypeT<uint64_t(1) << 44> tAVX512_4VNNIW;
+	static const local::TypeT<uint64_t(1) << 45> tAVX512_4FMAPS;
+	static const local::TypeT<uint64_t(1) << 46> tPREFETCHWT1;
+	static const local::TypeT<uint64_t(1) << 47> tPREFETCHW;
+	static const local::TypeT<uint64_t(1) << 48> tSHA;
+	static const local::TypeT<uint64_t(1) << 49> tMPX;
+	static const local::TypeT<uint64_t(1) << 50> tAVX512_VBMI2;
+	static const local::TypeT<uint64_t(1) << 51> tGFNI;
+	static const local::TypeT<uint64_t(1) << 52> tVAES;
+	static const local::TypeT<uint64_t(1) << 53> tVPCLMULQDQ;
+	static const local::TypeT<uint64_t(1) << 54> tAVX512_VNNI;
+	static const local::TypeT<uint64_t(1) << 55> tAVX512_BITALG;
+	static const local::TypeT<uint64_t(1) << 56> tAVX512_VPOPCNTDQ;
+	static const local::TypeT<uint64_t(1) << 57> tAVX512_BF16;
+	static const local::TypeT<uint64_t(1) << 58> tAVX512_VP2INTERSECT;
+	static const local::TypeT<uint64_t(1) << 59> tAMX_TILE;
+	static const local::TypeT<uint64_t(1) << 60> tAMX_INT8;
+	static const local::TypeT<uint64_t(1) << 61> tAMX_BF16;
+	static const local::TypeT<uint64_t(1) << 62> tAVX_VNNI;
+	static const local::TypeT<uint64_t(1) << 63> tCLFLUSHOPT;
+	static const local::TypeT<0, 1 << 0> tCLDEMOTE;
+	static const local::TypeT<0, 1 << 1> tMOVDIRI;
+	static const local::TypeT<0, 1 << 2> tMOVDIR64B;
+	static const local::TypeT<0, 1 << 3> tCLZERO; // AMD Zen
 
 	Cpu()
 		: type_(NONE)
@@ -377,13 +410,13 @@ public:
 		, coresSharignDataCache_()
 		, dataCacheLevels_(0)
 	{
-		unsigned int data[4] = {};
-		const unsigned int& EAX = data[0];
-		const unsigned int& EBX = data[1];
-		const unsigned int& ECX = data[2];
-		const unsigned int& EDX = data[3];
+		uint32_t data[4] = {};
+		const uint32_t& EAX = data[0];
+		const uint32_t& EBX = data[1];
+		const uint32_t& ECX = data[2];
+		const uint32_t& EDX = data[3];
 		getCpuid(0, data);
-		const unsigned int maxNum = EAX;
+		const uint32_t maxNum = EAX;
 		static const char intel[] = "ntel";
 		static const char amd[] = "cAMD";
 		if (ECX == get32bitAsBE(amd)) {
@@ -406,7 +439,8 @@ public:
 
 		// Extended flags information
 		getCpuid(0x80000000, data);
-		if (EAX >= 0x80000001) {
+		const uint32_t maxExtendedNum = EAX;
+		if (maxExtendedNum >= 0x80000001) {
 			getCpuid(0x80000001, data);
 
 			if (EDX & (1U << 31)) type_ |= t3DN;
@@ -416,6 +450,11 @@ public:
 			if (EDX & (1U << 15)) type_ |= tCMOV;
 			if (ECX & (1U << 5)) type_ |= tLZCNT;
 			if (ECX & (1U << 8)) type_ |= tPREFETCHW;
+		}
+
+		if (maxExtendedNum >= 0x80000008) {
+			getCpuid(0x80000008, data);
+			if (EBX & (1U << 0)) type_ |= tCLZERO;
 		}
 
 		getCpuid(1, data);
@@ -483,11 +522,16 @@ public:
 			if (EBX & (1U << 18)) type_ |= tRDSEED;
 			if (EBX & (1U << 19)) type_ |= tADX;
 			if (EBX & (1U << 20)) type_ |= tSMAP;
+			if (EBX & (1U << 23)) type_ |= tCLFLUSHOPT;
 			if (EBX & (1U << 4)) type_ |= tHLE;
 			if (EBX & (1U << 11)) type_ |= tRTM;
 			if (EBX & (1U << 14)) type_ |= tMPX;
 			if (EBX & (1U << 29)) type_ |= tSHA;
 			if (ECX & (1U << 0)) type_ |= tPREFETCHWT1;
+			if (ECX & (1U << 5)) type_ |= tWAITPKG;
+			if (ECX & (1U << 25)) type_ |= tCLDEMOTE;
+			if (ECX & (1U << 27)) type_ |= tMOVDIRI;
+			if (ECX & (1U << 28)) type_ |= tMOVDIR64B;
 			if (EDX & (1U << 24)) type_ |= tAMX_TILE;
 			if (EDX & (1U << 25)) type_ |= tAMX_INT8;
 			if (EDX & (1U << 22)) type_ |= tAMX_BF16;
@@ -511,9 +555,9 @@ public:
 		printf("display:family=%X, model=%X\n", displayFamily, displayModel);
 #endif
 	}
-	bool has(Type type) const
+	bool has(const Type& type) const
 	{
-		return (type & type_) != 0;
+		return (type & type_) == type;
 	}
 };
 
@@ -526,7 +570,7 @@ public:
 	#ifdef _MSC_VER
 		return __rdtsc();
 	#else
-		unsigned int eax, edx;
+		uint32_t eax, edx;
 		__asm__ volatile("rdtsc" : "=a"(eax), "=d"(edx));
 		return ((uint64_t)edx << 32) | eax;
 	#endif
