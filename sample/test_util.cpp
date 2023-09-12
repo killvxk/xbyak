@@ -36,7 +36,8 @@ void putCPUinfo(bool onlyCpuidFeature)
 		{ Cpu::tE3DN, "e3dn" },
 		{ Cpu::tAESNI, "aesni" },
 		{ Cpu::tRDTSCP, "rdtscp" },
-		{ Cpu::tOSXSAVE, "osxsave(xgetvb)" },
+		{ Cpu::tXSAVE, "xsave(xgetvb)" },
+		{ Cpu::tOSXSAVE, "osxsave" },
 		{ Cpu::tPCLMULQDQ, "pclmulqdq" },
 		{ Cpu::tAVX, "avx" },
 		{ Cpu::tFMA, "fma" },
@@ -88,7 +89,20 @@ void putCPUinfo(bool onlyCpuidFeature)
 		{ Cpu::tCLDEMOTE, "cldemote" },
 		{ Cpu::tMOVDIRI, "movdiri" },
 		{ Cpu::tMOVDIR64B, "movdir64b" },
+		{ Cpu::tUINTR, "uintr" },
+		{ Cpu::tSERIALIZE, "serialize" },
 		{ Cpu::tCLZERO, "clzero" },
+		{ Cpu::tAMX_FP16, "amx_fp16" },
+		{ Cpu::tAVX_VNNI_INT8, "avx_vnni_int8" },
+		{ Cpu::tAVX_NE_CONVERT, "avx_ne_convert" },
+		{ Cpu::tAVX_IFMA, "avx_ifma" },
+		{ Cpu::tRAO_INT, "rao-int" },
+		{ Cpu::tCMPCCXADD, "cmpccxadd" },
+		{ Cpu::tPREFETCHITI, "prefetchiti" },
+		{ Cpu::tSHA512, "sha512" },
+		{ Cpu::tSM3, "sm3" },
+		{ Cpu::tSM4, "sm4" },
+		{ Cpu::tAVX_VNNI_INT16, "avx_vnni_int16" },
 	};
 	for (size_t i = 0; i < NUM_OF_ARRAY(tbl); i++) {
 		if (cpu.has(tbl[i].type)) printf(" %s", tbl[i].str);
@@ -120,7 +134,6 @@ void putCPUinfo(bool onlyCpuidFeature)
 		Core i7-3930K        6           2D
 	*/
 	cpu.putFamily();
-	if (!cpu.has(Cpu::tINTEL)) return;
 	for (unsigned int i = 0; i < cpu.getDataCacheLevels(); i++) {
 		printf("cache level=%u data cache size=%u cores sharing data cache=%u\n", i, cpu.getDataCacheSize(i), cpu.getCoresSharingDataCache(i));
 	}

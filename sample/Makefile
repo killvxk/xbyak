@@ -1,6 +1,7 @@
 XBYAK_INC=../xbyak/xbyak.h
+CXX?=g++
 
-BOOST_EXIST=$(shell echo "\#include <boost/spirit/core.hpp>" | (gcc -E - 2>/dev/null) | grep "boost/spirit/core.hpp" >/dev/null && echo "1")
+BOOST_EXIST=$(shell echo "#include <boost/spirit/core.hpp>" | $(CXX) -x c++ -c - 2>/dev/null && echo 1)
 UNAME_M=$(shell uname -m)
 
 ONLY_64BIT=0
@@ -104,7 +105,7 @@ profiler-vtune: profiler.cpp ../xbyak/xbyak_util.h
 	$(CXX) $(CFLAGS) profiler.cpp -o $@ -DXBYAK_USE_VTUNE -I /opt/intel/vtune_amplifier/include/ -L /opt/intel/vtune_amplifier/lib64 -ljitprofiling -ldl
 
 clean:
-	rm -rf *.o $(TARGET) *.exe profiler profiler-vtune
+	rm -rf $(TARGET) profiler profiler-vtune
 
 test : test0.cpp $(XBYAK_INC)
 test64: test0.cpp $(XBYAK_INC)
@@ -121,7 +122,7 @@ toyvm : toyvm.cpp $(XBYAK_INC)
 static_buf: static_buf.cpp $(XBYAK_INC)
 static_buf64: static_buf.cpp $(XBYAK_INC)
 test_util : test_util.cpp $(XBYAK_INC) ../xbyak/xbyak_util.h
-test_util2 : test_util.cpp $(XBYAK_INC) ../xbyak/xbyak_util.h
+test_util64 : test_util.cpp $(XBYAK_INC) ../xbyak/xbyak_util.h
 jmp_table: jmp_table.cpp $(XBYAK_INC)
 jmp_table64: jmp_table.cpp $(XBYAK_INC)
 memfd: memfd.cpp $(XBYAK_INC)

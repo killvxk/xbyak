@@ -77,7 +77,11 @@
 	#endif
 	#include <windows.h>
 	#include <malloc.h>
-	#define XBYAK_TLS __declspec(thread)
+	#ifdef _MSC_VER
+		#define XBYAK_TLS __declspec(thread)
+	#else
+		#define XBYAK_TLS __thread
+	#endif
 #elif defined(__GNUC__)
 	#include <unistd.h>
 	#include <sys/mman.h>
@@ -114,7 +118,7 @@
 	#endif
 #endif
 
-#if (__cplusplus >= 201103) || (defined(_MSC_VER) && _MSC_VER >= 1800)
+#if (__cplusplus >= 201103) || (defined(_MSC_VER) && _MSC_VER >= 1900)
 	#undef XBYAK_TLS
 	#define XBYAK_TLS thread_local
 	#define XBYAK_VARIADIC_TEMPLATE
@@ -140,11 +144,18 @@
 	#pragma warning(disable : 4127) /* constant expresison */
 #endif
 
+// disable -Warray-bounds because it may be a bug of gcc. https://gcc.gnu.org/bugzilla/show_bug.cgi?id=104603
+#if defined(__GNUC__) && !defined(__clang__)
+	#define XBYAK_DISABLE_WARNING_ARRAY_BOUNDS
+	#pragma GCC diagnostic push
+	#pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
+
 namespace Xbyak {
 
 enum {
 	DEFAULT_MAX_CODE_SIZE = 4096,
-	VERSION = 0x6600 /* 0xABCD = A.BC(.D) */
+	VERSION = 0x6730 /* 0xABCD = A.BC(.D) */
 };
 
 #ifndef MIE_INTEGER_TYPE_DEFINED
@@ -360,14 +371,36 @@ inline const To CastTo(From p) XBYAK_NOEXCEPT
 }
 namespace inner {
 
-static const size_t ALIGN_PAGE_SIZE = 4096;
+#ifdef _WIN32
+struct SystemInfo {
+	SYSTEM_INFO info;
+	SystemInfo()
+	{
+		GetSystemInfo(&info);
+	}
+};
+#endif
+//static const size_t ALIGN_PAGE_SIZE = 4096;
+inline size_t getPageSize()
+{
+#ifdef _WIN32
+	static const SystemInfo si;
+	return si.info.dwPageSize;
+#elif defined(__GNUC__)
+	static const long pageSize = sysconf(_SC_PAGESIZE);
+	if (pageSize > 0) {
+		return (size_t)pageSize;
+	}
+#endif
+	return 4096;
+}
 
 inline bool IsInDisp8(uint32_t x) { return 0xFFFFFF80 <= x || x <= 0x7F; }
 inline bool IsInInt32(uint64_t x) { return ~uint64_t(0x7fffffffu) <= x || x <= 0x7FFFFFFFU; }
 
 inline uint32_t VerifyInInt32(uint64_t x)
 {
-#ifdef XBYAK64
+#if defined(XBYAK64) && !defined(__ILP32__)
 	if (!IsInInt32(x)) XBYAK_THROW_RET(ERR_OFFSET_IS_TOO_BIG, 0)
 #endif
 	return static_cast<uint32_t>(x);
@@ -386,7 +419,7 @@ enum LabelMode {
 */
 struct Allocator {
 	explicit Allocator(const std::string& = "") {} // same interface with MmapAllocator
-	virtual uint8_t *alloc(size_t size) { return reinterpret_cast<uint8_t*>(AlignedMalloc(size, inner::ALIGN_PAGE_SIZE)); }
+	virtual uint8_t *alloc(size_t size) { return reinterpret_cast<uint8_t*>(AlignedMalloc(size, inner::getPageSize())); }
 	virtual void free(uint8_t *p) { AlignedFree(p); }
 	virtual ~Allocator() {}
 	/* override to return false if you call protect() manually */
@@ -434,7 +467,7 @@ public:
 	explicit MmapAllocator(const std::string& name = "xbyak") : name_(name) {}
 	uint8_t *alloc(size_t size)
 	{
-		const size_t alignedSizeM1 = inner::ALIGN_PAGE_SIZE - 1;
+		const size_t alignedSizeM1 = inner::getPageSize() - 1;
 		size = (size + alignedSizeM1) & ~alignedSizeM1;
 #if defined(MAP_ANONYMOUS)
 		int mode = MAP_PRIVATE | MAP_ANONYMOUS;
@@ -1202,9 +1235,6 @@ public:
 		size_t pageSize = sysconf(_SC_PAGESIZE);
 		size_t iaddr = reinterpret_cast<size_t>(addr);
 		size_t roundAddr = iaddr & ~(pageSize - static_cast<size_t>(1));
-#ifndef NDEBUG
-		if (pageSize != 4096) fprintf(stderr, "large page(%zd) is used. not tested enough.\n", pageSize);
-#endif
 		return mprotect(reinterpret_cast<void*>(roundAddr), size + (iaddr - roundAddr), mode) == 0;
 #else
 		return true;
@@ -1474,7 +1504,6 @@ public:
 		clabelDefList_.clear();
 		clabelUndefList_.clear();
 		resetLabelPtrList();
-		ClearError();
 	}
 	void enterLocal()
 	{
@@ -1816,7 +1845,7 @@ private:
 	void setSIB(const RegExp& e, int reg, int disp8N = 0)
 	{
 		uint64_t disp64 = e.getDisp();
-#ifdef XBYAK64
+#if defined(XBYAK64) && !defined(__ILP32__)
 #ifdef XBYAK_OLD_DISP_CHECK
 		// treat 0xffffffff as 0xffffffffffffffff
 		uint64_t high = disp64 >> 32;
@@ -2187,9 +2216,6 @@ private:
 	{
 		if (op.isBit(32)) XBYAK_THROW(ERR_BAD_COMBINATION)
 		int w = op.isBit(16);
-#ifdef XBYAK64
-		if (op.isHigh8bit()) XBYAK_THROW(ERR_BAD_COMBINATION)
-#endif
 		bool cond = reg.isREG() && (reg.getBit() > op.getBit());
 		opModRM(reg, op, cond && op.isREG(), cond && op.isMEM(), 0x0F, code | w);
 	}
@@ -2411,18 +2437,21 @@ private:
 		if (addr.getRegExp().getIndex().getKind() != kind) XBYAK_THROW(ERR_BAD_VSIB_ADDRESSING)
 		opVex(x, 0, addr, type, code);
 	}
-	void opVnni(const Xmm& x1, const Xmm& x2, const Operand& op, int type, int code0, PreferredEncoding encoding)
+	void opEncoding(const Xmm& x1, const Xmm& x2, const Operand& op, int type, int code0, PreferredEncoding encoding)
 	{
+		opAVX_X_X_XM(x1, x2, op, type | orEvexIf(encoding), code0);
+	}
+	int orEvexIf(PreferredEncoding encoding) {
 		if (encoding == DefaultEncoding) {
-			encoding = EvexEncoding;
+			encoding = defaultEncoding_;
 		}
 		if (encoding == EvexEncoding) {
 #ifdef XBYAK_DISABLE_AVX512
 			XBYAK_THROW(ERR_EVEX_IS_INVALID)
 #endif
-			type |= T_MUST_EVEX;
+			return T_MUST_EVEX;
 		}
-		opAVX_X_X_XM(x1, x2, op, type, code0);
+		return 0;
 	}
 	void opInOut(const Reg& a, const Reg& d, uint8_t code)
 	{
@@ -2507,6 +2536,7 @@ public:
 #endif
 private:
 	bool isDefaultJmpNEAR_;
+	PreferredEncoding defaultEncoding_;
 public:
 	void L(const std::string& label) { labelMgr_.defineSlabel(label); }
 	void L(Label& label) { labelMgr_.defineClabel(label); }
@@ -2786,11 +2816,13 @@ public:
 		, es(Segment::es), cs(Segment::cs), ss(Segment::ss), ds(Segment::ds), fs(Segment::fs), gs(Segment::gs)
 #endif
 		, isDefaultJmpNEAR_(false)
+		, defaultEncoding_(EvexEncoding)
 	{
 		labelMgr_.set(this);
 	}
 	void reset()
 	{
+		ClearError();
 		resetSize();
 		labelMgr_.reset();
 		labelMgr_.set(this);
@@ -2821,6 +2853,9 @@ public:
 #ifdef XBYAK_UNDEF_JNL
 	#undef jnl
 #endif
+
+	// set default encoding to select Vex or Evex
+	void setDefaultEncoding(PreferredEncoding encoding) { defaultEncoding_ = encoding; }
 
 	/*
 		use single byte nop if useMultiByteNop = false
@@ -2868,7 +2903,7 @@ public:
 	{
 		if (x == 1) return;
 		if (x < 1 || (x & (x - 1))) XBYAK_THROW(ERR_BAD_ALIGN)
-		if (isAutoGrow() && x > inner::ALIGN_PAGE_SIZE) fprintf(stderr, "warning:autoGrow mode does not support %d align\n", (int)x);
+		if (isAutoGrow()) XBYAK_THROW(ERR_BAD_ALIGN)
 		size_t remain = size_t(getCurr()) % x;
 		if (remain) {
 			nop(x - remain, useMultiByteNop);
@@ -2924,6 +2959,10 @@ static const XBYAK_CONSTEXPR Segment es(Segment::es), cs(Segment::cs), ss(Segmen
 
 #ifdef _MSC_VER
 	#pragma warning(pop)
+#endif
+
+#if defined(__GNUC__) && !defined(__clang__)
+	#pragma GCC diagnostic pop
 #endif
 
 } // end of namespace

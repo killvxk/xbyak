@@ -533,6 +533,7 @@ class Test {
 			"nop",
 
 			"sahf",
+			"serialize",
 			"stc",
 			"std",
 			"sti",
@@ -557,6 +558,7 @@ class Test {
 			"wbinvd",
 			"wrmsr",
 			"xlatb",
+			"xend",
 
 			"popf",
 			"pushf",
@@ -1017,9 +1019,7 @@ class Test {
 	}
 	void putCmov() const
 	{
-		const struct {
-			const char *s;
-		} tbl[] = {
+		const char tbl[][4] = {
 			"o",
 			"no",
 			"b",
@@ -1051,15 +1051,22 @@ class Test {
 			"nle",
 			"g",
 		};
+#if defined(__GNUC__) && !defined(__clang__)
+	#pragma GCC diagnostic push
+	#pragma GCC diagnostic ignored "-Wformat-truncation" // wrong detection
+#endif
 		for (size_t i = 0; i < NUM_OF_ARRAY(tbl); i++) {
 			char buf[32];
-			snprintf(buf, sizeof(buf), "cmov%s", tbl[i].s);
+			snprintf(buf, sizeof(buf), "cmov%s", tbl[i]);
 			put(buf, REG16, REG16|MEM);
 			put(buf, REG32, REG32|MEM);
 			put(buf, REG64, REG64|MEM);
-			snprintf(buf, sizeof(buf), "set%s", tbl[i].s);
+			snprintf(buf, sizeof(buf), "set%s", tbl[i]);
 			put(buf, REG8|REG8_3|MEM);
 		}
+#if defined(__GNUC__) && !defined(__clang__)
+	#pragma GCC diagnostic pop
+#endif
 	}
 	void putReg1() const
 	{
@@ -1294,7 +1301,7 @@ class Test {
 			put(p, REG64, "0x1234567890abcdefLL", "0x1234567890abcdef");
 			put("movbe", REG16|REG32e, MEM);
 			put("movbe", MEM, REG16|REG32e);
-#ifdef XBYAK64
+#if defined(XBYAK64) && !defined(__ILP32__)
 			put(p, RAX|EAX|AX|AL, "ptr [0x1234567890abcdefLL]", "[qword 0x1234567890abcdef]");
 			put(p, "ptr [0x1234567890abcdefLL]", "[qword 0x1234567890abcdef]", RAX|EAX|AX|AL);
 			put(p, "qword [rax], 0");
@@ -1317,6 +1324,7 @@ class Test {
 				put(p, REG64, REG16|REG8|MEM8|MEM16);
 				put(p, REG32, REG16|REG8|MEM8|MEM16);
 				put(p, REG16, REG8|MEM8);
+				put(p, "eax, ah");
 			}
 		}
 #ifdef XBYAK64
@@ -1326,6 +1334,7 @@ class Test {
 #ifdef XBYAK64
 		put("cmpxchg16b", MEM);
 		put("fxrstor64", MEM);
+		put("xbegin", "0x12345678");
 #endif
 		{
 			const char tbl[][8] = {
@@ -1348,6 +1357,7 @@ class Test {
 		put("xchg", EAX|REG32, EAX|REG32|MEM);
 		put("xchg", MEM, EAX|REG32);
 		put("xchg", REG64, REG64|MEM);
+		put("xabort", IMM8);
 	}
 	void putShift() const
 	{
@@ -1493,18 +1503,6 @@ class Test {
 				put(p, XMM, XMM|MEM, IMM);
 			}
 		}
-		{
-			const char tbl[][16] = {
-				"pclmullqlqdq",
-				"pclmulhqlqdq",
-//				"pclmullqhdq", // QQQ : not supported by nasm/yasm
-//				"pclmulhqhdq",
-			};
-			for (size_t i = 0; i < NUM_OF_ARRAY(tbl); i++) {
-				const char *p = tbl[i];
-				put(p, XMM, XMM|MEM);
-			}
-		}
 		put("extractps", REG32e|MEM, XMM, IMM);
 		put("pextrw", REG32e|MEM, XMM, IMM); // pextrw for REG32 is for MMX2
 		put("pextrb", REG32e|MEM, XMM, IMM);
@@ -1521,6 +1519,23 @@ class Test {
 		put("pinsrq", XMM, REG64|MEM, IMM);
 #endif
 
+	}
+	void putVpclmulqdq()
+	{
+		const char tbl[][16] = {
+			"vpclmullqlqdq",
+			"vpclmulhqlqdq",
+			"vpclmullqhqdq",
+			"vpclmulhqhqdq",
+		};
+		for (size_t i = 0; i < NUM_OF_ARRAY(tbl); i++) {
+			const char *p = tbl[i] + 1; // remove the top 'v'
+			put(p, XMM, XMM|MEM);
+			p = tbl[i]; // use the top 'v'
+			put(p, XMM, XMM, XMM|MEM);
+			put(p, YMM, YMM, YMM|MEM);
+			put(p, ZMM, ZMM, ZMM|MEM);
+		}
 	}
 	void putSHA() const
 	{
@@ -2569,6 +2584,7 @@ public:
 		putPushPop8_16();
 #else
 		putSIMPLE();
+		putVpclmulqdq();
 		putReg1();
 		putBt();
 		putRorM();
@@ -2607,7 +2623,7 @@ public:
 		putMPX();
 #endif
 
-#ifdef XBYAK64
+#if defined(XBYAK64) && !defined(__ILP32__)
 
 #ifdef USE_YASM
 		putRip();
